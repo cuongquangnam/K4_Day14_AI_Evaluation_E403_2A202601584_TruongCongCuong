@@ -21,7 +21,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from dotenv import load_dotenv
-from openai import OpenAI, OpenAIError
+from google import genai
+from google.genai import types
 
 load_dotenv(Path(__file__).resolve().with_name(".env"))
 
@@ -242,28 +243,44 @@ class TextGenerator(Protocol):
     def generate(self, prompt: str) -> str: ...
 
 
-class OpenAIGenerator:
+class GeminiGenerator:
+    """Generate answers with the Gemini API (google-genai SDK)."""
+
     def __init__(self, max_output_tokens: int = 300) -> None:
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
-        self.model = os.getenv("OPENAI_MODEL", "").strip()
+        api_key = (
+            os.getenv("GEMINI_API_KEY", "").strip()
+            or os.getenv("OPENAI_API_KEY", "").strip()
+        )
+        self.model = (
+            os.getenv("GEMINI_MODEL", "").strip()
+            or os.getenv("OPENAI_MODEL", "").strip()
+            or "gemini-2.0-flash"
+        )
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is missing from .env")
-        if not self.model:
-            raise RuntimeError("OPENAI_MODEL is missing from .env")
-        self.client = OpenAI(api_key=api_key)
+            raise RuntimeError(
+                "GEMINI_API_KEY is missing from .env "
+                "(OPENAI_API_KEY is also accepted as a fallback name)"
+            )
+        self.client = genai.Client(api_key=api_key)
         self.max_output_tokens = max_output_tokens
 
     def generate(self, prompt: str) -> str:
-        response = self.client.responses.create(
+        response = self.client.models.generate_content(
             model=self.model,
-            input=prompt,
-            temperature=0,
-            max_output_tokens=self.max_output_tokens,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0,
+                max_output_tokens=self.max_output_tokens,
+            ),
         )
-        answer = response.output_text.strip()
+        answer = (response.text or "").strip()
         if not answer:
-            raise RuntimeError("OpenAI returned an empty answer")
+            raise RuntimeError("Gemini returned an empty answer")
         return answer
+
+
+# Keep the old name as an alias so existing imports/docs still work.
+OpenAIGenerator = GeminiGenerator
 
 
 @dataclass(frozen=True)
@@ -508,7 +525,7 @@ def main() -> int:
             json.dumps(artifact, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-    except (OSError, OpenAIError, TypeError, ValueError, RuntimeError) as exc:
+    except (OSError, TypeError, ValueError, RuntimeError) as exc:
         print(f"ERROR: {exc}")
         return 2
     print(f"Generated {len(artifact['answers'])} actual answers: {output}")
