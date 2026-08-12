@@ -30,11 +30,11 @@ critical.
 
 | Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | Low score trên câu open-ended / multi-hop khi answer paraphrase mạnh so với context (token overlap thấp dù vẫn grounded) | Low score trên câu policy/warranty/pricing — answer bịa điều kiện, số ngày, phí ngoài context | Block deploy; audit grounding; siết prompt “chỉ dùng context”; kiểm tra retrieval |
+| Answer Relevance | Low score khi question mơ hồ hoặc cần clarifying question trước khi trả lời đầy đủ | Low score khi agent trả lời lạc chủ đề / sai intent trên câu hỏi rõ ràng của khách | Phân tích intent/routing; chỉnh prompt; thêm few-shot cho intent phổ biến |
+| Context Recall | Low score trên Hard/Adversarial khi gold evidence rải nhiều doc và top-k cố ý hẹp | Low score trên Easy/Medium factual — retriever bỏ sót evidence cần thiết để trả lời đúng | Tăng k / sửa chunking / query rewrite; không chỉ tối ưu generator |
+| Context Precision | Low score khi relevant chunk vẫn có trong list nhưng đứng muộn (recall ổn) | Low score kèm recall thấp, hoặc noise chunk đứng đầu làm generator hallucinate | Rerank; lọc noise; cải thiện ranking trước khi tăng k mù quáng |
+| Completeness | Low score khi expected dài chi tiết nhưng answer ngắn vẫn đủ action cho user (partial credit chấp nhận được ở prototype) | Low score khi bỏ sót điều kiện bắt buộc (deadline, phí, ngoại lệ) trên support policy | Bổ sung checklist trong prompt; cải thiện retrieval coverage; thêm test cases cho missing info |
 
 ### Exercise 1.2 — Bias trong LLM-as-a-Judge
 
@@ -47,14 +47,20 @@ Ba bias thường gặp:
 **Câu 1: Thiết kế experiment phát hiện position bias với ít nhất hai conditions.**
 
 > *Câu trả lời:*
+> Chọn một tập cặp (answer A, answer B) đã có human preference (A tốt hơn B, hoặc ngược lại). Chạy hai conditions trên cùng judge + cùng rubric:
+> 1) **Condition Order-AB:** prompt trình bày A trước, B sau.
+> 2) **Condition Order-BA:** đảo vị trí — B trước, A sau.
+> Giữ nguyên nội dung answers, chỉ đổi thứ tự. Đo win-rate / điểm trung bình theo vị trí. Nếu answer ở vị trí đầu thắng thường xuyên hơn dù nội dung không đổi (ví dụ A thắng khi đứng trước nhưng thua khi đứng sau), đó là bằng chứng position bias. Có thể thêm condition thứ ba: randomize order mỗi lần chấm và so sánh variance.
 
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
 > *Câu trả lời:*
+> Rubric phải chấm theo **nội dung đúng / đủ / actionable**, không thưởng độ dài. Ví dụ: mức 5 yêu cầu “đủ điều kiện policy + bước tiếp theo rõ”, mức thấp nếu thừa thông tin lạc đề hoặc lặp. Thêm tiêu chí phạt **verbosity không giúp ích** (padding, lặp lại context). Trong prompt judge: “Score based on criteria only; longer answers must not receive higher scores unless they add correct, relevant content.” Có thể chuẩn hóa độ dài (truncate / summarize trước khi chấm) hoặc chấm theo checklist binary thay vì impression tổng thể.
 
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
 
 > *Câu trả lời:*
+> LLM judge là proxy, không phải ground truth — dễ lệch thang điểm, thiên vị verbosity/position/self-preference, và không ổn định giữa các lần chạy. Calibrate với human labels (correlation, agreement, confusion matrix theo mức 1–5) giúp chọn threshold tin cậy, phát hiện bias, điều chỉnh rubric, và biết khi nào phải escalate sang human review thay vì tin tuyệt đối vào auto-score trong CI/CD.
 
 ### Exercise 1.3 — Evaluation trong CI/CD
 
@@ -62,13 +68,16 @@ Ba bias thường gặp:
 
 | Metric | Threshold | Lý do |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | 0.80 | Hallucination trên support (giá, bảo hành, hoàn tiền) rủi ro cao → gate chặt; theo band “Good” của bài giảng |
+| Answer Relevance | 0.70 | Trả lời lạc đề làm hỏng UX nhưng ít nguy hiểm pháp lý hơn faithfulness; cho phép biên độ khi câu hỏi hơi mơ hồ |
+| Completeness | 0.70 | Cần đủ điều kiện quan trọng, nhưng expected answer đầy đủ chi tiết có thể làm score hơi thấp dù answer vẫn usable |
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
 > *Câu trả lời:*
+> - **Offline:** mỗi PR/release hoặc đổi prompt/model/retriever — chạy golden dataset + RAGAS metrics trong CI để catch regression trước khi lên prod.
+> - **Online:** sau deploy, theo dõi real traffic (satisfaction, latency, cost, live feedback/traces) vì offline không cover hết phân phối thật.
+> - **Human review:** case high-stakes (khiếu nại, bảo mật, tranh chấp chính sách), edge cases khó, hoặc định kỳ calibrate LLM judge / cập nhật golden set khi auto-metrics và user feedback lệch nhau.
 
 ---
 
